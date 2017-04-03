@@ -181,7 +181,7 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 	puts(req);
 
 	char *host, *port, *proto;
-	char *path = "";
+	char *path = NULL;
 
 	char *x = req;
 
@@ -202,7 +202,7 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 		if (*x == ':') {
 			*x = '\0';
 			port = x + 1;
-		} else if (*x == '/') {
+		} else if (!path && *x == '/') {
 			*x = '\0';
 			path = x + 1;
 		}
@@ -210,6 +210,8 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 	}
 	*x = '\0';
 	proto = ++x;
+	if (!path)
+		path = "";
 
 	/* lookup */
 	struct sockaddr_in addr;
