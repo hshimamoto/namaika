@@ -106,41 +106,22 @@ struct httpclient {
 	/* params */
 	int status;
 	int dead;
-	int conn;
 	/* connections */
 	struct http_connection *local, *remote;
+	/* reqline */
+	char reqline[4096];
+	int hdrptr;
 };
 
-static int wait_remote_connect(struct httpclient *cli)
-{
-	char buf[1024];
-	int rlen, rest, ret;
-	char *sep;
-
-	rlen = 0;
-retry:
-	rest = 1024 - rlen;
-	ret = read(cli->remote->sock, buf + rlen, rest);
-	if (ret <= 0)
-		return -1; /* loose connection... */
-
-	sep = strstr(buf, "\r\n\r\n");
-
-	if (!sep)
-		goto retry;
-
-	//puts(buf);
-
-	/* TODO: check STATUS */
-	cli->conn = 1;
-
-	return 0;
-}
+enum {
+	HCLI_ST_INIT = 0,
+	HCLI_ST_CONNECTING = 1,
+	HCLI_ST_CONNECTED = 2,
+};
 
 static void handle_httpclient_local_connect(struct httpclient *cli)
 {
 	char *rbuf = cli->local->rbuf;
-	int rlen = cli->local->rlen;
 
 	char *req = rbuf;
 	char *crlf, *sep;
@@ -239,24 +220,20 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 	sprintf(connline, "CONNECT %s:%s HTTP/1.0\r\n\r\n", ip, port);
 	printf("%s -> %s", host, connline);
 
-	int reqlen = header - req;
-
 	http_connection_send(cli->remote, connline, strlen(connline));
 	if (method == 5) {/* CONNECT */
 		/* browser should handle after CONNECT */
-		cli->conn = 1;
+		cli->status = HCLI_ST_CONNECTED;
+		http_connection_bufclear(cli->local);
 		return;
 	}
 
 	/* wait a CONNECT */
-	wait_remote_connect(cli);
-	/* TODO: handle error case */
+	cli->status = HCLI_ST_CONNECTING;
 
-	char reqline[4096];
-
-	sprintf(reqline, "%s /%s %s\r\n", req, path, proto);
-	http_connection_send(cli->remote, reqline, strlen(reqline));
-	http_connection_send(cli->remote, header, rlen - reqlen);
+	/* setup request */
+	sprintf(cli->reqline, "%s /%s %s\r\n", req, path, proto);
+	cli->hdrptr = header - req;
 }
 
 static void handle_httpclient_local(struct httpclient *cli)
@@ -270,15 +247,47 @@ static void handle_httpclient_local(struct httpclient *cli)
 
 	//puts(conn->rbuf);
 
-	if (cli->conn) {
+	switch (cli->status) {
+	case HCLI_ST_INIT:
+		handle_httpclient_local_connect(cli);
+		return;
+	case HCLI_ST_CONNECTING:
+		return; /* waiting */
+	case HCLI_ST_CONNECTED:
 		http_connection_send(cli->remote, conn->rbuf, conn->rlen);
-		goto out;
+		break;
 	}
 
-	handle_httpclient_local_connect(cli);
-
-out:
 	http_connection_bufclear(conn);
+}
+
+static int handle_httpclient_remote_connecting(struct httpclient *cli)
+{
+	struct http_connection *conn = cli->remote;
+	char *rbuf = conn->rbuf;
+	char *sep;
+
+	sep = strstr(rbuf, "\r\n\r\n");
+
+	if (!sep)
+		return 0;
+
+	if (strncmp(rbuf, "HTTP/1", 6))
+		return -1; /* TODO: handle bad request */
+	if (strncmp(rbuf + 9, "200", 3))
+		return -1; /* TODO: handle bad request */
+
+	http_connection_send(conn, cli->reqline, strlen(cli->reqline));
+	http_connection_send(conn,
+			     cli->local->rbuf + cli->hdrptr,
+			     cli->local->rlen - cli->hdrptr);
+	http_connection_bufclear(cli->local);
+
+	http_connection_bufclear(conn);
+
+	cli->status = HCLI_ST_CONNECTED;
+
+	return 0;
 }
 
 static void handle_httpclient_remote(struct httpclient *cli)
@@ -291,6 +300,11 @@ static void handle_httpclient_remote(struct httpclient *cli)
 		return; /* closed */
 
 	//puts(conn->rbuf);
+
+	if (cli->status == HCLI_ST_CONNECTING) {
+		handle_httpclient_remote_connecting(cli);
+		return;
+	}
 
 	http_connection_send(cli->local, conn->rbuf, conn->rlen);
 	http_connection_bufclear(conn);
@@ -312,7 +326,7 @@ static struct httpclient *new_httpclient(int local, int remote)
 
 	cli = malloc(sizeof(*cli));
 	memset(cli, 0, sizeof(*cli));
-	cli->status = 0; /* initialized */
+	cli->status = HCLI_ST_INIT;
 
 	if (local >= 0)
 		cli->local = new_http_connection(local);
