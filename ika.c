@@ -42,6 +42,7 @@ struct http_connection {
 static int http_connection_readbuf(struct http_connection *conn)
 {
 	int rest, rlen;
+	int curr;
 
 	if (conn->sock < 0)
 		return -1; /* no sock */
@@ -49,14 +50,15 @@ static int http_connection_readbuf(struct http_connection *conn)
 	if (conn->rflag == 0)
 		return conn->rlen; /* not readable */
 
-	if (conn->rlen < 0)
-		conn->rlen = 0;
+	curr = conn->rlen;
+	if (curr < 0)
+		curr = 0;
 
-	rest = BUFSZ - conn->rlen - 1;
+	rest = BUFSZ - curr - 1;
 	if (rest <= 0)
 		return conn->rlen; /* max */
 
-	rlen = read(conn->sock, conn->rbuf + conn->rlen, rest);
+	rlen = read(conn->sock, conn->rbuf + curr, rest);
 	if (rlen <= 0) {
 		close(conn->sock);
 		conn->sock = -1;
@@ -64,7 +66,7 @@ static int http_connection_readbuf(struct http_connection *conn)
 		return conn->rlen; /* return current len */
 	}
 
-	conn->rlen += rlen;
+	conn->rlen = curr + rlen;
 	conn->rbuf[conn->rlen] = '\0';
 
 	return conn->rlen;
@@ -82,6 +84,15 @@ static int http_connection_send(struct http_connection *conn,
 	if (conn->sock < 0)
 		return -1;
 	return write(conn->sock, buf, len);
+}
+
+static void http_connection_close(struct http_connection *conn)
+{
+	if (conn->sock < 0)
+		return;
+	close(conn->sock);
+	conn->sock = -1;
+	conn->close = 1;
 }
 
 struct http_connection *new_http_connection(int sock)
@@ -243,6 +254,9 @@ static void handle_httpclient_local(struct httpclient *cli)
 	struct http_connection *conn = cli->local;
 	int rlen;
 
+	if (cli->remote->close)
+		http_connection_close(conn);
+
 	rlen = http_connection_readbuf(conn);
 	if (rlen < 0)
 		return; /* closed */
@@ -296,6 +310,9 @@ static void handle_httpclient_remote(struct httpclient *cli)
 {
 	struct http_connection *conn = cli->remote;
 	int rlen;
+
+	if (cli->local->close)
+		http_connection_close(conn);
 
 	rlen = http_connection_readbuf(conn);
 	if (rlen < 0)
