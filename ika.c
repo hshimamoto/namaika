@@ -101,11 +101,14 @@ void delete_http_connection(struct http_connection *conn)
 	free(conn);
 }
 
+static uint32_t httpclient_ids;
+
 struct httpclient {
 	struct httpclient *next;
 	/* params */
 	int status;
 	int dead;
+	uint32_t id;
 	/* connections */
 	struct http_connection *local, *remote;
 	/* reqline */
@@ -206,7 +209,6 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 	unsigned int ii;
 
 	ii = addr.sin_addr.s_addr;
-	printf("%x\n", ii);
 
 	char connline[4096];
 	char ip[64];
@@ -328,6 +330,13 @@ static struct httpclient *new_httpclient(int local, int remote)
 	memset(cli, 0, sizeof(*cli));
 	cli->status = HCLI_ST_INIT;
 
+	/* sentinel */
+	if (local == -1 && remote == -1)
+		return cli;
+
+	cli->id = httpclient_ids++;
+	printf("new httpclient %u\n", cli->id);
+
 	if (local >= 0)
 		cli->local = new_http_connection(local);
 	if (remote >= 0)
@@ -338,6 +347,8 @@ static struct httpclient *new_httpclient(int local, int remote)
 
 static void delete_httpclient(struct httpclient *cli)
 {
+	printf("delete httpclient %u\n", cli->id);
+
 	delete_http_connection(cli->local);
 	delete_http_connection(cli->remote);
 	free(cli);
@@ -373,8 +384,6 @@ static struct httpclient *accept_localhttp(int s)
 	local = accept(s, (struct sockaddr *)&addr, &len);
 	if (local == -1)
 		return NULL;
-
-	printf("accepted\n");
 
 	/* connect to proxy */
 	remote = socket(AF_INET, SOCK_STREAM, 0);
