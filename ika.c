@@ -113,6 +113,7 @@ void delete_http_connection(struct http_connection *conn)
 }
 
 static uint32_t httpclient_ids;
+static uint32_t nr_httpclients;
 
 struct httpclient {
 	struct httpclient *next;
@@ -353,6 +354,7 @@ static struct httpclient *new_httpclient(int local, int remote)
 
 	cli->id = httpclient_ids++;
 	printf("new httpclient %u\n", cli->id);
+	++nr_httpclients;
 
 	if (local >= 0)
 		cli->local = new_http_connection(local);
@@ -365,6 +367,7 @@ static struct httpclient *new_httpclient(int local, int remote)
 static void delete_httpclient(struct httpclient *cli)
 {
 	printf("delete httpclient %u\n", cli->id);
+	--nr_httpclients;
 
 	delete_http_connection(cli->local);
 	delete_http_connection(cli->remote);
