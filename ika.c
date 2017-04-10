@@ -1,3 +1,4 @@
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,8 @@ static struct sockaddr_in proxyaddr;
 static int bindport = 8080;
 
 #define BUFSZ	(2 * 1024 * 1024)
+
+static time_t now;
 
 int lookup_addr_in(const char *host, const char *port,
 		   struct sockaddr_in *addr)
@@ -35,6 +38,7 @@ struct http_connection {
 	int sock;
 	int close;
 	int rflag;
+	time_t last;
 	char rbuf[BUFSZ];
 	int rlen;
 };
@@ -69,6 +73,8 @@ static int http_connection_readbuf(struct http_connection *conn)
 	conn->rlen = curr + rlen;
 	conn->rbuf[conn->rlen] = '\0';
 
+	conn->last = now;
+
 	return conn->rlen;
 }
 
@@ -83,6 +89,9 @@ static int http_connection_send(struct http_connection *conn,
 {
 	if (conn->sock < 0)
 		return -1;
+
+	conn->last = now;
+
 	return write(conn->sock, buf, len);
 }
 
@@ -102,6 +111,7 @@ struct http_connection *new_http_connection(int sock)
 	conn = malloc(sizeof(*conn));
 	memset(conn, 0, sizeof(*conn));
 	conn->sock = sock;
+	conn->last = now;
 	http_connection_bufclear(conn);
 
 	return conn;
@@ -258,6 +268,9 @@ static void handle_httpclient_local(struct httpclient *cli)
 	if (cli->remote->close)
 		http_connection_close(conn);
 
+	if ((now - conn->last) > 60)
+		http_connection_close(conn);
+
 	rlen = http_connection_readbuf(conn);
 	if (rlen < 0)
 		return; /* closed */
@@ -313,6 +326,9 @@ static void handle_httpclient_remote(struct httpclient *cli)
 	int rlen;
 
 	if (cli->local->close)
+		http_connection_close(conn);
+
+	if ((now - conn->last) > 60)
 		http_connection_close(conn);
 
 	rlen = http_connection_readbuf(conn);
@@ -461,6 +477,8 @@ void localhttp(void)
 		struct timeval tv;
 		int ret;
 		struct httpclient *cli;
+
+		now = time(NULL);
 
 		for (cli = head; cli != last; cli = cli->next) {
 			while (cli->next->dead) {
