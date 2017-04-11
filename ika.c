@@ -110,6 +110,53 @@ int get_addr(const char *host)
 	return p->addr;
 }
 
+/* explicit list */
+struct addr_entry elist_head, elist_last;
+
+void init_explicit_list(void)
+{
+	elist_head.next = &elist_last;
+	elist_last.next = NULL;
+
+	FILE *fp = fopen("explicit.txt", "r");
+
+	if (!fp)
+		return;
+
+	char buf[256];
+
+	while (fgets(buf, 256, fp)) {
+		struct addr_entry *p;
+		char *lf;
+
+		lf = strstr(buf, "\r\n");
+		if (!lf)
+			lf = strstr(buf, "\r");
+		if (!lf)
+			lf = strstr(buf, "\n");
+		if (lf)
+			*lf = '\0';
+
+		p = new_addr_entry(buf, 0);
+		p->next = elist_head.next;
+		elist_head.next = p;
+	}
+
+	fclose(fp);
+}
+
+int check_explicit_list(const char *host)
+{
+	struct addr_entry *p;
+
+	for (p = elist_head.next; p != &elist_last; p = p->next) {
+		if (!strcmp(p->host, host))
+			return 1;
+	}
+
+	return 0;
+}
+
 struct http_connection {
 	int sock;
 	int close;
@@ -219,6 +266,7 @@ enum {
 	HCLI_ST_INIT = 0,
 	HCLI_ST_CONNECTING = 1,
 	HCLI_ST_CONNECTED = 2,
+	HCLI_ST_PASSTHROUGH = 3,
 };
 
 static void handle_httpclient_local_connect(struct httpclient *cli)
@@ -265,6 +313,7 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 
 	char *host, *port, *proto;
 	char *path = NULL;
+	char *colon = NULL;
 
 	char *x = req;
 
@@ -283,6 +332,7 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 	x = host + 1;
 	while (*x != ' ') {
 		if (*x == ':') {
+			colon = x;
 			*x = '\0';
 			port = x + 1;
 		} else if (!path && *x == '/') {
@@ -293,11 +343,28 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 	}
 	*x = '\0';
 	proto = ++x;
-	if (!path)
-		path = "";
 
 	/* lookup */
 	printf("host:%s port:%s\n", host, port);
+
+	if (!check_explicit_list(host)) {
+		if (method != 5) {
+			host -= 7;
+		}
+		host--;
+		*host = ' ';
+		if (colon)
+			*colon = ':';
+		if (path)
+			*(--path) = '/';
+		proto--;
+		*proto = ' ';
+		*crlf = '\r';
+		http_connection_send(cli->remote, cli->local->rbuf, cli->local->rlen);
+		http_connection_bufclear(cli->local);
+		cli->status = HCLI_ST_PASSTHROUGH;
+		return;
+	}
 
 	uint32_t ii = get_addr(host);
 
@@ -328,6 +395,9 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 
 	/* wait a CONNECT */
 	cli->status = HCLI_ST_CONNECTING;
+
+	if (!path)
+		path = "";
 
 	/* setup request */
 	sprintf(cli->reqline, "%s /%s %s\r\n", req, path, proto);
@@ -384,6 +454,7 @@ static void handle_httpclient_local(struct httpclient *cli)
 	case HCLI_ST_CONNECTING:
 		return; /* waiting */
 	case HCLI_ST_CONNECTED:
+	case HCLI_ST_PASSTHROUGH:
 		http_connection_send(cli->remote, conn->rbuf, conn->rlen);
 		break;
 	}
@@ -571,6 +642,7 @@ void localhttp(void)
 	head->next = last;
 
 	init_addr_entries();
+	init_explicit_list();
 
 	max = s + 1;
 	for (;;) {
