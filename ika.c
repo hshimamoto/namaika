@@ -35,6 +35,81 @@ int lookup_addr_in(const char *host, const char *port,
 	return 0;
 }
 
+struct addr_entry {
+	struct addr_entry *next;
+	time_t lifetime;
+	int type;
+	char host[256]; /* host name, max 255 */
+	uint32_t addr;
+};
+
+struct addr_entry *new_addr_entry(const char *host, uint32_t addr)
+{
+	struct addr_entry *p;
+
+	if (strlen(host) >= 256)
+		return NULL;
+
+	p = malloc(sizeof(*p));
+	memset(p, 0, sizeof(*p));
+	p->lifetime = now + 600; /* 10min */
+	strcpy(p->host, host);
+	p->addr = addr;
+
+	return p;
+}
+
+void delete_addr_entry(struct addr_entry *p)
+{
+	free(p);
+}
+
+static struct addr_entry a_head, a_last;
+
+void init_addr_entries(void)
+{
+	a_head.next = &a_last;
+	a_last.next = NULL;
+}
+
+void manage_addr_entries(void)
+{
+	struct addr_entry *p;
+
+	for (p = &a_head; p != &a_last; p = p->next) {
+		while (p->next->lifetime > 0 && p->next->lifetime < now) {
+			struct addr_entry *dead = p->next;
+
+			p->next = dead->next;
+			delete_addr_entry(dead);
+		}
+	}
+}
+
+int get_addr(const char *host)
+{
+	struct sockaddr_in addr;
+	struct addr_entry *p;
+
+	for (p = a_head.next; p != &a_last; p = p->next) {
+		if (!strcmp(p->host, host))
+			return p->addr;
+	}
+
+	if (lookup_addr_in(host, NULL, &addr) == -1)
+		return 0;
+
+	p = new_addr_entry(host, addr.sin_addr.s_addr);
+	if (!p)
+		return 0;
+
+	/* insert */
+	p->next = a_head.next;
+	a_head.next = p;
+
+	return p->addr;
+}
+
 struct http_connection {
 	int sock;
 	int close;
@@ -222,17 +297,14 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 		path = "";
 
 	/* lookup */
-	struct sockaddr_in addr;
-
 	printf("host:%s port:%s\n", host, port);
-	if (lookup_addr_in(host, port, &addr) == -1) {
+
+	uint32_t ii = get_addr(host);
+
+	if (ii == 0) {
 		printf("lookup addr error\n");
 		return;
 	}
-
-	unsigned int ii;
-
-	ii = addr.sin_addr.s_addr;
 
 	char connline[4096];
 	char ip[64];
@@ -498,6 +570,8 @@ void localhttp(void)
 	last = new_httpclient(-1, -1);
 	head->next = last;
 
+	init_addr_entries();
+
 	max = s + 1;
 	for (;;) {
 		struct timeval tv;
@@ -506,6 +580,7 @@ void localhttp(void)
 
 		now = time(NULL);
 
+		manage_addr_entries();
 		for (cli = head; cli != last; cli = cli->next) {
 			while (cli->next->dead) {
 				struct httpclient *dead = cli->next;
