@@ -504,7 +504,7 @@ void localhttp(void)
 			if (sock >= max)
 				max = sock + 1;
 		}
-		tv.tv_sec = 60; /* 1min */
+		tv.tv_sec = nr_httpclients ? 10 : 60; /* 10sec or 60sec */
 		tv.tv_usec = 0;
 		ret = select(max, &fds, NULL, NULL, &tv);
 		if (ret == -1)
