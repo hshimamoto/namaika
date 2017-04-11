@@ -10,6 +10,7 @@
 #include <netdb.h>
 
 static struct sockaddr_in proxyaddr;
+static struct sockaddr_in bindaddr;
 static int bindport = 8080;
 
 #define BUFSZ	(2 * 1024 * 1024)
@@ -392,18 +393,13 @@ static void delete_httpclient(struct httpclient *cli)
 
 static int bind_localhttp(void)
 {
-	struct sockaddr_in addr;
 	int s, one;
 
 	s = socket(AF_INET, SOCK_STREAM, 0);
 	one = 1;
 	setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 
-	addr.sin_family = AF_INET;
-	addr.sin_addr.s_addr = INADDR_ANY;
-	addr.sin_port = htons(bindport);
-
-	bind(s, (struct sockaddr *)&addr, sizeof(addr));
+	bind(s, (struct sockaddr *)&bindaddr, sizeof(bindaddr));
 	listen(s, 5);
 
 	return s;
@@ -527,7 +523,7 @@ void localhttp(void)
 
 void usage(void)
 {
-	puts("Usage: ika <proxy host> <proxy port> [bind port]");
+	puts("Usage: ika <proxy host> <proxy port> [[bind addr:]bind port]");
 	exit(1);
 }
 
@@ -541,8 +537,21 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
-	if (argc > 3)
-		bindport = strtoul(argv[3], NULL, 0);
+	bindaddr.sin_family = AF_INET;
+	bindaddr.sin_addr.s_addr = INADDR_ANY;
+	if (argc > 3) {
+		char *p = strstr(argv[3], ":");
+
+		if (p) {
+			*p++ = '\0';
+			bindaddr.sin_addr.s_addr = inet_addr(argv[3]);
+		} else {
+			p = argv[3];
+		}
+
+		bindport = strtoul(p, NULL, 0);
+	}
+	bindaddr.sin_port = htons(bindport);
 
 	localhttp();
 
