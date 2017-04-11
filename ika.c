@@ -136,7 +136,8 @@ struct httpclient {
 	struct http_connection *local, *remote;
 	/* reqline */
 	char reqline[4096];
-	int hdrptr;
+	char reqheader[4096];
+	int bodyptr;
 };
 
 enum {
@@ -258,7 +259,33 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 
 	/* setup request */
 	sprintf(cli->reqline, "%s /%s %s\r\n", req, path, proto);
-	cli->hdrptr = header - req;
+
+	/* modify header */
+	char *line = header;
+
+	cli->reqheader[0] = '\0';
+	while (strncmp(line, "\r\n", 2)) {
+		char *crlf = strstr(line, "\r\n");
+
+		if (!strncmp(line, "Connection", 10))
+			goto skip;
+		if (!strncmp(line, "Proxy", 5))
+			goto skip;
+		*crlf = '\0';
+		strcat(cli->reqheader, line);
+		strcat(cli->reqheader, "\r\n");
+		*crlf = '\r'; /* paranoia */
+skip:
+		line = crlf + 2;
+	}
+	line += 2;
+	strcat(cli->reqheader, "Connection: close\r\n\r\n");
+	cli->bodyptr = header - line;
+
+	if (cli->local->rlen <= cli->bodyptr) {
+		http_connection_bufclear(cli->local);
+		cli->bodyptr = 0;
+	}
 }
 
 static void handle_httpclient_local(struct httpclient *cli)
@@ -309,9 +336,12 @@ static int handle_httpclient_remote_connecting(struct httpclient *cli)
 		return -1; /* TODO: handle bad request */
 
 	http_connection_send(conn, cli->reqline, strlen(cli->reqline));
-	http_connection_send(conn,
-			     cli->local->rbuf + cli->hdrptr,
-			     cli->local->rlen - cli->hdrptr);
+	http_connection_send(conn, cli->reqheader, strlen(cli->reqheader));
+	if (cli->bodyptr > 0) {
+		http_connection_send(conn,
+				     cli->local->rbuf + cli->bodyptr,
+				     cli->local->rlen - cli->bodyptr);
+	}
 	http_connection_bufclear(cli->local);
 
 	http_connection_bufclear(conn);
