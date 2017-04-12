@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
 #include <sys/time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -197,7 +198,9 @@ static int http_connection_readbuf(struct http_connection *conn)
 	if (rest <= 0)
 		return conn->rlen; /* max */
 
-	rlen = read(conn->sock, conn->rbuf + curr, rest);
+	rlen = recv(conn->sock, conn->rbuf + curr, rest, MSG_DONTWAIT);
+	if (rlen == -1 && errno == EAGAIN)
+		return conn->rlen;
 	if (rlen <= 0) {
 		close(conn->sock);
 		conn->sock = -1;
@@ -227,7 +230,7 @@ static int http_connection_send(struct http_connection *conn,
 
 	conn->last = now;
 
-	return write(conn->sock, buf, len);
+	return send(conn->sock, buf, len, 0);
 }
 
 static void http_connection_close(struct http_connection *conn)
