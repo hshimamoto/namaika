@@ -275,6 +275,7 @@ struct httpclient {
 	char reqline[4096];
 	char reqheader[4096];
 	int bodyptr;
+	char host[4096];
 };
 
 enum {
@@ -361,6 +362,7 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 
 	/* lookup */
 	printf("host:%s port:%s\n", host, port);
+	strcpy(cli->host, host);
 
 	if (!check_explicit_list(host)) {
 		if (method != 5) {
@@ -571,7 +573,7 @@ static struct httpclient *new_httpclient(int local, int remote)
 
 static void delete_httpclient(struct httpclient *cli)
 {
-	printf("delete httpclient %u\n", cli->id);
+	printf("delete httpclient %u for %s\n", cli->id, cli->host);
 	--nr_httpclients;
 
 	delete_http_connection(cli->local);
