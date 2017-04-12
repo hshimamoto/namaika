@@ -137,7 +137,14 @@ void init_explicit_list(void)
 		if (lf)
 			*lf = '\0';
 
-		p = new_addr_entry(buf, 0);
+		if (buf[0] == '*') {
+			p = new_addr_entry(&buf[1], 0);
+			p->type = 1;
+		} else {
+			p = new_addr_entry(buf, 0);
+			p->type = 0;
+		}
+
 		p->next = elist_head.next;
 		elist_head.next = p;
 	}
@@ -150,8 +157,13 @@ int check_explicit_list(const char *host)
 	struct addr_entry *p;
 
 	for (p = elist_head.next; p != &elist_last; p = p->next) {
-		if (!strcmp(p->host, host))
-			return 1;
+		if (p->type == 0) {
+			if (!strcmp(p->host, host))
+				return 1;
+		} else {
+			if (strstr(host, p->host))
+				return 1;
+		}
 	}
 
 	return 0;
