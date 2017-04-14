@@ -302,12 +302,13 @@ struct httpclient {
 	char reqline[4096];
 	char reqheader[4096];
 	int bodyptr;
-	char host[4096];
 	/* parse header */
 	char *hdrs[256];
 	int nr_hdrs;
 	int parsedone;
 	char requestline[1024];
+	char *method, *scheme, *host, *port, *path, *proto;
+	int contentlen;
 };
 
 enum {
@@ -319,13 +320,12 @@ enum {
 
 static int handle_httpclient_local_request_parse(struct httpclient *cli)
 {
-	char *method, *scheme, *host, *port, *path, *proto;
 	char *src, *dst;
 	int i;
 
 	/* get info from request header */
-	method = cli->requestline;
-	dst = method;
+	cli->method = cli->requestline;
+	dst = cli->method;
 	src = cli->hdrs[0];
 	/* get method */
 	while (*src) {
@@ -340,10 +340,10 @@ static int handle_httpclient_local_request_parse(struct httpclient *cli)
 
 get_scheme:
 	/* get scheme */
-	scheme = NULL;
-	if (!strncmp(method, "CONNECT", 7))
+	cli->scheme = NULL;
+	if (!strncmp(cli->method, "CONNECT", 7))
 		goto get_host;
-	scheme = dst;
+	cli->scheme = dst;
 	while (*src) {
 		if (*src == ':') {
 			*dst++ = '\0';
@@ -355,7 +355,7 @@ get_scheme:
 	return -1;
 
 get_host:
-	host = dst;
+	cli->host = dst;
 	while (*src) {
 		if (*src == ':') {
 			*dst++ = '\0';
@@ -365,14 +365,14 @@ get_host:
 		if (*src == '/') {
 			*dst++ = '\0';
 			src++;
-			port = NULL;
+			cli->port = NULL;
 			goto get_path;
 		}
 		if (*src == ' ') {
 			*dst++ = '\0';
 			src++;
-			port = NULL;
-			path = NULL;
+			cli->port = NULL;
+			cli->path = NULL;
 			goto get_proto;
 		}
 		*dst++ = *src++;
@@ -380,7 +380,7 @@ get_host:
 	return -1;
 
 get_port:
-	port = dst;
+	cli->port = dst;
 	while (*src) {
 		if (*src == '/') {
 			*dst++ = '\0';
@@ -390,7 +390,7 @@ get_port:
 		if (*src == ' ') {
 			*dst++ = '\0';
 			src++;
-			path = NULL;
+			cli->path = NULL;
 			goto get_proto;
 		}
 		*dst++ = *src++;
@@ -398,7 +398,7 @@ get_port:
 	return -1;
 
 get_path:
-	path = dst;
+	cli->path = dst;
 	while (*src) {
 		if (*src == ' ') {
 			*dst++ = '\0';
@@ -410,20 +410,27 @@ get_path:
 	return -1;
 
 get_proto:
-	proto = dst;
+	cli->proto = dst;
 	while (*src)
 		*dst++ = *src++;
 	*dst++ = '\0';
 
 	printf("%s %s %s %s %s %s\n",
-		method, scheme, host, port, path, proto);
+		cli->method, cli->scheme, cli->host,
+		cli->port, cli->path, cli->proto);
 
 	/* header process */
 	for (i = 1; i < cli->nr_hdrs; i++) {
-		puts(cli->hdrs[i]);
+		char *hdr = cli->hdrs[i];
+
+		puts(hdr);
+		if (!strncmp(hdr, "Content-Length:", 15)) {
+			cli->contentlen = strtoul(hdr + 15, NULL, 10);
+			printf("data %u bytes\n", cli->contentlen);
+		}
 	}
 
-	return -1;
+	return 0;
 }
 
 static void handle_httpclient_local_connect(struct httpclient *cli)
@@ -452,119 +459,23 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 		cli->nr_hdrs++;
 	}
 
-#if 0
-	/* show hdrs */
-	{
-		for (int i = 0; i < cli->nr_hdrs; i++)
-			printf("%d: %s\n", i, cli->hdrs[i]);
-	}
-#endif
-
-	if (handle_httpclient_local_request_parse(cli) == 0)
+	if (handle_httpclient_local_request_parse(cli) == -1) {
+		printf("<%u> parse request failed\n", cli->id);
+		http_connection_close(conn);
 		return;
-
-	/* below old fashon procedures */
-
-	char *rbuf = cli->local->rbuf;
-
-	char *req = rbuf;
-	char *crlf, *sep;
-
-	crlf = strstr(req, "\r\n");
-	sep = strstr(req, "\r\n\r\n");
-
-	/* header done */
-	if (!sep)
-		return;
-
-	/* req type ok? */
-	int method = -1;
-
-	if (!strncmp(req, "GET", 3))
-		method = 0;
-	else if (!strncmp(req, "POST", 4))
-		method = 1;
-	else if (!strncmp(req, "PUT", 3))
-		method = 2;
-	else if (!strncmp(req, "DELETE", 6))
-		method = 3;
-	else if (!strncmp(req, "HEAD", 4))
-		method = 4;
-	else if (!strncmp(req, "CONNECT", 7))
-		method = 5;
-	else {
-		printf("unknown request\n");
-		return; /* close? */
 	}
 
-	/* copy request line */
-
-	char *header = crlf + 2;
-
-	*crlf = '\0';
-
-	puts(req);
-
-	char *host, *port, *proto;
-	char *path = NULL;
-	char *colon = NULL;
-
-	char *x = req;
-
-	while (*x != ' ')
-		x++;
-	*x = '\0';
-	x++;
-	host = x;
-	if (method != 5) {
-		port = "80";
-		host += 7; /* http:// */
-	} else {
-		port = "443";
-	}
-
-	x = host + 1;
-	while (*x != ' ') {
-		if (*x == ':') {
-			colon = x;
-			*x = '\0';
-			port = x + 1;
-		} else if (!path && *x == '/') {
-			*x = '\0';
-			path = x + 1;
-		}
-		x++;
-	}
-	*x = '\0';
-	proto = ++x;
-
-	/* lookup */
-	printf("host:%s port:%s\n", host, port);
-	strcpy(cli->host, host);
-
-	if (!check_explicit_list(host)) {
-		if (method != 5) {
-			host -= 7;
-		}
-		host--;
-		*host = ' ';
-		if (colon)
-			*colon = ':';
-		if (path)
-			*(--path) = '/';
-		proto--;
-		*proto = ' ';
-		*crlf = '\r';
+	if (!check_explicit_list(cli->host)) {
 		http_connection_send(cli->remote, cli->local->rbuf, cli->local->rlen);
 		http_connection_bufclear(cli->local);
 		cli->status = HCLI_ST_PASSTHROUGH;
 		return;
 	}
 
-	uint32_t ii = get_addr(host);
+	uint32_t ii = get_addr(cli->host);
 
 	if (ii == 0) {
-		printf("lookup addr error\n");
+		printf("<%u> lookup addr for %s error\n", cli->id, cli->host);
 		return;
 	}
 
@@ -577,11 +488,13 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 		(ii >> 16) & 0xff,
 		(ii >> 24) & 0xff);
 
-	sprintf(connline, "CONNECT %s:%s HTTP/1.0\r\n\r\n", ip, port);
-	printf("%s -> %s", host, connline);
+	sprintf(connline, "CONNECT %s:%s HTTP/1.0\r\n\r\n",
+		ip,
+		cli->port ? cli->port : "80");
+	printf("%s -> %s", cli->host, connline);
 
 	http_connection_send(cli->remote, connline, strlen(connline));
-	if (method == 5) {/* CONNECT */
+	if (!strncmp(cli->method, "CONNECT", 7)) {
 		/* browser should handle after CONNECT */
 		cli->status = HCLI_ST_CONNECTED;
 		http_connection_bufclear(cli->local);
@@ -591,33 +504,27 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 	/* wait a CONNECT */
 	cli->status = HCLI_ST_CONNECTING;
 
-	if (!path)
-		path = "";
-
 	/* setup request */
-	sprintf(cli->reqline, "%s /%s %s\r\n", req, path, proto);
+	sprintf(cli->reqline,
+		"%s /%s %s\r\n",
+		cli->method,
+		cli->path ? cli->path : "",
+		cli->proto);
 
 	/* modify header */
-	char *line = header;
-
 	cli->reqheader[0] = '\0';
-	while (strncmp(line, "\r\n", 2)) {
-		char *crlf = strstr(line, "\r\n");
+	for (int i = 1; i < cli->nr_hdrs; i++) {
+		char *hdr = cli->hdrs[i];
 
-		if (!strncmp(line, "Connection", 10))
-			goto skip;
-		if (!strncmp(line, "Proxy", 5))
-			goto skip;
-		*crlf = '\0';
-		strcat(cli->reqheader, line);
+		if (!strncmp(hdr, "Connection", 10))
+			continue;
+		if (!strncmp(hdr, "Proxy", 5))
+			continue;
+		strcat(cli->reqheader, hdr);
 		strcat(cli->reqheader, "\r\n");
-		*crlf = '\r'; /* paranoia */
-skip:
-		line = crlf + 2;
 	}
-	line += 2;
 	strcat(cli->reqheader, "Connection: close\r\n\r\n");
-	cli->bodyptr = header - line;
+	cli->bodyptr = cli->local->readptr;
 
 	if (cli->local->rlen <= cli->bodyptr) {
 		http_connection_bufclear(cli->local);
