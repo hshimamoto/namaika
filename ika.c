@@ -307,6 +307,7 @@ struct httpclient {
 	char *hdrs[256];
 	int nr_hdrs;
 	int parsedone;
+	char requestline[1024];
 };
 
 enum {
@@ -315,6 +316,115 @@ enum {
 	HCLI_ST_CONNECTED = 2,
 	HCLI_ST_PASSTHROUGH = 3,
 };
+
+static int handle_httpclient_local_request_parse(struct httpclient *cli)
+{
+	char *method, *scheme, *host, *port, *path, *proto;
+	char *src, *dst;
+	int i;
+
+	/* get info from request header */
+	method = cli->requestline;
+	dst = method;
+	src = cli->hdrs[0];
+	/* get method */
+	while (*src) {
+		if (*src == ' ') {
+			*dst++ = '\0';
+			src++;
+			goto get_scheme;
+		}
+		*dst++ = *src++;
+	}
+	return -1;
+
+get_scheme:
+	/* get scheme */
+	scheme = NULL;
+	if (!strncmp(method, "CONNECT", 7))
+		goto get_host;
+	scheme = dst;
+	while (*src) {
+		if (*src == ':') {
+			*dst++ = '\0';
+			src += 3; /* http:// */
+			goto get_host;
+		}
+		*dst++ = *src++;
+	}
+	return -1;
+
+get_host:
+	host = dst;
+	while (*src) {
+		if (*src == ':') {
+			*dst++ = '\0';
+			src++;
+			goto get_port;
+		}
+		if (*src == '/') {
+			*dst++ = '\0';
+			src++;
+			port = NULL;
+			goto get_path;
+		}
+		if (*src == ' ') {
+			*dst++ = '\0';
+			src++;
+			port = NULL;
+			path = NULL;
+			goto get_proto;
+		}
+		*dst++ = *src++;
+	}
+	return -1;
+
+get_port:
+	port = dst;
+	while (*src) {
+		if (*src == '/') {
+			*dst++ = '\0';
+			src++;
+			goto get_path;
+		}
+		if (*src == ' ') {
+			*dst++ = '\0';
+			src++;
+			path = NULL;
+			goto get_proto;
+		}
+		*dst++ = *src++;
+	}
+	return -1;
+
+get_path:
+	path = dst;
+	while (*src) {
+		if (*src == ' ') {
+			*dst++ = '\0';
+			src++;
+			goto get_proto;
+		}
+		*dst++ = *src++;
+	}
+	return -1;
+
+get_proto:
+	proto = dst;
+	while (*src)
+		*dst++ = *src++;
+	*dst++ = '\0';
+
+	printf("%s %s %s %s %s %s\n",
+		method, scheme, host, port, path, proto);
+
+	/* header process */
+	for (i = 1; i < cli->nr_hdrs; i++) {
+		puts(cli->hdrs[i]);
+	}
+
+	return -1;
+}
 
 static void handle_httpclient_local_connect(struct httpclient *cli)
 {
@@ -349,6 +459,11 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 			printf("%d: %s\n", i, cli->hdrs[i]);
 	}
 #endif
+
+	if (handle_httpclient_local_request_parse(cli) == 0)
+		return;
+
+	/* below old fashon procedures */
 
 	char *rbuf = cli->local->rbuf;
 
