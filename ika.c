@@ -177,6 +177,7 @@ struct http_connection {
 	time_t last;
 	char rbuf[BUFSZ];
 	int rlen;
+	int readptr;
 };
 
 static int http_connection_readbuf(struct http_connection *conn)
@@ -220,6 +221,32 @@ static void http_connection_bufclear(struct http_connection *conn)
 {
 	conn->rbuf[0] = 0;
 	conn->rlen = -1;
+	conn->readptr = 0;
+}
+
+static int http_connection_readline(struct http_connection *conn,
+				    char *buf, int maxlen)
+{
+	char *ptr = &conn->rbuf[conn->readptr];
+	int n, rest;
+
+	if (conn->rlen < 2)
+		return -1;
+
+	//printf("rest:%s", ptr);
+	rest = conn->rlen - conn->readptr;
+	if (maxlen > rest)
+		maxlen = rest;
+	for (n = 0; n < maxlen; n++) {
+		if (ptr[n] == '\r' && ptr[n + 1] == '\n') {
+			buf[n] = '\0';
+			conn->readptr += n + 2;
+			return n;
+		}
+		buf[n] = ptr[n];
+	}
+
+	return -2;
 }
 
 static int http_connection_send(struct http_connection *conn,
@@ -276,6 +303,10 @@ struct httpclient {
 	char reqheader[4096];
 	int bodyptr;
 	char host[4096];
+	/* parse header */
+	char *hdrs[256];
+	int nr_hdrs;
+	int parsedone;
 };
 
 enum {
@@ -287,6 +318,38 @@ enum {
 
 static void handle_httpclient_local_connect(struct httpclient *cli)
 {
+	struct http_connection *conn = cli->local;
+
+	while (!cli->parsedone) {
+		char buf[1024];
+		int ret;
+
+		ret = http_connection_readline(conn, buf, 1024);
+		if (ret == -1)
+			return;
+		if (ret == -2) {
+			/* unable to handle this request */
+			http_connection_close(conn);
+			return;
+		}
+		if (ret < 0)
+			return;
+		if (ret == 0) {
+			cli->parsedone = 1;
+			break;
+		}
+		cli->hdrs[cli->nr_hdrs] = strdup(buf);
+		cli->nr_hdrs++;
+	}
+
+#if 0
+	/* show hdrs */
+	{
+		for (int i = 0; i < cli->nr_hdrs; i++)
+			printf("%d: %s\n", i, cli->hdrs[i]);
+	}
+#endif
+
 	char *rbuf = cli->local->rbuf;
 
 	char *req = rbuf;
@@ -576,8 +639,14 @@ static void delete_httpclient(struct httpclient *cli)
 	printf("delete httpclient %u for %s\n", cli->id, cli->host);
 	--nr_httpclients;
 
+	int i;
+
+	for (i = 0; i < 256; i++)
+		free(cli->hdrs[i]);
+
 	delete_http_connection(cli->local);
 	delete_http_connection(cli->remote);
+
 	free(cli);
 }
 
