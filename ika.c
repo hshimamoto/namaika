@@ -298,10 +298,6 @@ struct httpclient {
 	uint32_t id;
 	/* connections */
 	struct http_connection *local, *remote;
-	/* reqline */
-	char reqline[4096];
-	char reqheader[4096];
-	int bodyptr;
 	/* parse header */
 	char *hdrs[256];
 	int nr_hdrs;
@@ -309,6 +305,7 @@ struct httpclient {
 	char requestline[1024];
 	char *method, *scheme, *host, *port, *path, *proto;
 	int contentlen;
+	int bodyptr;
 };
 
 enum {
@@ -504,28 +501,7 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 	/* wait a CONNECT */
 	cli->status = HCLI_ST_CONNECTING;
 
-	/* setup request */
-	sprintf(cli->reqline,
-		"%s /%s %s\r\n",
-		cli->method,
-		cli->path ? cli->path : "",
-		cli->proto);
-
-	/* modify header */
-	cli->reqheader[0] = '\0';
-	for (int i = 1; i < cli->nr_hdrs; i++) {
-		char *hdr = cli->hdrs[i];
-
-		if (!strncmp(hdr, "Connection", 10))
-			continue;
-		if (!strncmp(hdr, "Proxy", 5))
-			continue;
-		strcat(cli->reqheader, hdr);
-		strcat(cli->reqheader, "\r\n");
-	}
-	strcat(cli->reqheader, "Connection: close\r\n\r\n");
 	cli->bodyptr = cli->local->readptr;
-
 	if (cli->local->rlen <= cli->bodyptr) {
 		http_connection_bufclear(cli->local);
 		cli->bodyptr = 0;
@@ -580,13 +556,37 @@ static int handle_httpclient_remote_connecting(struct httpclient *cli)
 	if (strncmp(rbuf + 9, "200", 3))
 		return -1; /* TODO: handle bad request */
 
-	http_connection_send(conn, cli->reqline, strlen(cli->reqline));
-	http_connection_send(conn, cli->reqheader, strlen(cli->reqheader));
+	char line[1024];
+
+	sprintf(line,
+		"%s /%s %s\r\n",
+		cli->method,
+		cli->path ? cli->path : "",
+		cli->proto);
+
+	http_connection_send(conn, line, strlen(line));
+
+	for (int i = 1; i < cli->nr_hdrs; i++) {
+		char *hdr = cli->hdrs[i];
+
+		if (!strncmp(hdr, "Connection", 10))
+			continue;
+		if (!strncmp(hdr, "Proxy", 5))
+			continue;
+		http_connection_send(conn, hdr, strlen(hdr));
+		http_connection_send(conn, "\r\n", 2);
+	}
+
+	char *connclose = "Connection: close\r\n\r\n";
+
+	http_connection_send(conn, connclose, strlen(connclose));
+
 	if (cli->bodyptr > 0) {
 		http_connection_send(conn,
 				     cli->local->rbuf + cli->bodyptr,
 				     cli->local->rlen - cli->bodyptr);
 	}
+
 	http_connection_bufclear(cli->local);
 
 	http_connection_bufclear(conn);
