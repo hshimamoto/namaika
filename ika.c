@@ -892,7 +892,7 @@ void usage(void)
 	exit(1);
 }
 
-int main(int argc, char **argv)
+void setup(int argc, char **argv)
 {
 	if (argc < 3)
 		usage();
@@ -917,6 +917,11 @@ int main(int argc, char **argv)
 		bindport = strtoul(p, NULL, 0);
 	}
 	bindaddr.sin_port = htons(bindport);
+}
+
+int main(int argc, char **argv)
+{
+	setup(argc, argv);
 
 	localhttp();
 
