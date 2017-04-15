@@ -6,9 +6,27 @@
 #include <errno.h>
 #include <sys/time.h>
 #include <sys/socket.h>
+#include <sys/ioctl.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+
+static int nonblock_recv(int s, void *buf, int len)
+{
+	int ret = recv(s, buf, len, 0);
+
+	if (ret == 0)
+		return -1;
+
+	if (ret == -1) {
+		if (errno == EAGAIN)
+			return 0;
+		if (errno == EINTR)
+			return 0;
+	}
+
+	return ret;
+}
 
 static struct sockaddr_in proxyaddr;
 static struct sockaddr_in bindaddr;
@@ -199,10 +217,8 @@ static int http_connection_readbuf(struct http_connection *conn)
 	if (rest <= 0)
 		return conn->rlen; /* max */
 
-	rlen = recv(conn->sock, conn->rbuf + curr, rest, MSG_DONTWAIT);
-	if (rlen == -1 && errno == EAGAIN)
-		return conn->rlen;
-	if (rlen <= 0) {
+	rlen = nonblock_recv(conn->sock, conn->rbuf + curr, rest);
+	if (rlen < 0) {
 		close(conn->sock);
 		conn->sock = -1;
 		conn->close = 1;
@@ -272,6 +288,10 @@ static void http_connection_close(struct http_connection *conn)
 struct http_connection *new_http_connection(int sock)
 {
 	struct http_connection *conn;
+	int val = 1;
+
+	/* set non blocking mode */
+	ioctl(sock, FIONBIO, &val);
 
 	conn = malloc(sizeof(*conn));
 	memset(conn, 0, sizeof(*conn));
