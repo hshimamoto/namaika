@@ -425,7 +425,8 @@ get_proto:
 		*dst++ = *src++;
 	*dst++ = '\0';
 
-	printf("%s %s %s %s %s %s\n",
+	printf("<%u> %s %s %s %s %s %s\n",
+		cli->id,
 		cli->method, cli->scheme, cli->host,
 		cli->port, cli->path, cli->proto);
 
@@ -436,7 +437,8 @@ get_proto:
 		puts(hdr);
 		if (!strncmp(hdr, "Content-Length:", 15)) {
 			cli->contentlen = strtoul(hdr + 15, NULL, 10);
-			printf("data %u bytes\n", cli->contentlen);
+			printf("<%u> data %u bytes\n",
+			       cli->id, cli->contentlen);
 		}
 	}
 
@@ -514,7 +516,7 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 	sprintf(connline, "CONNECT %s:%s HTTP/1.0\r\n\r\n",
 		ip,
 		cli->port ? cli->port : "80");
-	printf("%s -> %s", cli->host, connline);
+	printf("<%u> %s -> %s", cli->id, cli->host, connline);
 
 	http_connection_send(cli->remote, connline, strlen(connline));
 	if (!strncmp(cli->method, "CONNECT", 7)) {
