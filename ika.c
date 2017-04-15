@@ -315,6 +315,19 @@ enum {
 	HCLI_ST_PASSTHROUGH = 3,
 };
 
+static void httpclient_reset_request(struct httpclient *cli)
+{
+	int i;
+
+	for (i = 0; i < cli->nr_hdrs; i++) {
+		free(cli->hdrs[i]);
+		cli->hdrs[i] = NULL;
+	}
+	cli->nr_hdrs = 0;
+	cli->contentlen = 0;
+	cli->parsedone = 0;
+}
+
 static int handle_httpclient_local_request_parse(struct httpclient *cli)
 {
 	char *src, *dst;
@@ -478,14 +491,7 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 			cli->status = HCLI_ST_INIT;
 		else
 			cli->status = HCLI_ST_CONNECTED;
-		/* reset request */
-		for (int i = 0; i < cli->nr_hdrs; i++) {
-			free(cli->hdrs[i]);
-			cli->hdrs[i] = NULL;
-		}
-		cli->nr_hdrs = 0;
-		cli->contentlen = 0;
-		cli->parsedone = 0;
+		httpclient_reset_request(cli);
 		return;
 	}
 
@@ -555,22 +561,14 @@ static void handle_httpclient_local(struct httpclient *cli)
 		http_connection_send(cli->remote, conn->rbuf, conn->rlen);
 		break;
 	case HCLI_ST_PASSTHROUGH:
-	{
 		cli->contentlen -= cli->local->rlen;
 
+		http_connection_send(cli->remote, cli->local->rbuf, cli->local->rlen);
 		if (cli->contentlen <= 0) {
 			printf("<%u> request for %s done\n", cli->id, cli->host);
 			cli->status = HCLI_ST_INIT;
-			/* reset request */
-			for (int i = 0; i < cli->nr_hdrs; i++) {
-				free(cli->hdrs[i]);
-				cli->hdrs[i] = NULL;
-			}
-			cli->nr_hdrs = 0;
-			cli->contentlen = 0;
-			cli->parsedone = 0;
+			httpclient_reset_request(cli);
 		}
-	}
 		break;
 	}
 
