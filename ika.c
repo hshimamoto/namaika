@@ -651,7 +651,10 @@ static void handle_httpclient_remote(struct httpclient *cli)
 	//puts(conn->rbuf);
 
 	if (cli->status == HCLI_ST_CONNECTING) {
-		handle_httpclient_remote_connecting(cli);
+		if (handle_httpclient_remote_connecting(cli) == -1) {
+			/* failed to connect */
+			http_connection_close(conn);
+		}
 		return;
 	}
 
