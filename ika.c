@@ -11,6 +11,27 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
+static FILE *fopen_at_bin(const char *file, const char *mode)
+{
+	char path[256];
+	int len = strlen(file);
+	int ret;
+
+	ret = readlink("/proc/self/exe", path, 255);
+	if (ret < 0)
+		return NULL;
+	if ((ret + len) > 255)
+		return NULL;
+
+	/* path must be /path/to/ika */
+	path[ret - 3] = '\0';
+	strcat(path, file);
+
+	//printf("fopen %s\n", path);
+
+	return fopen(path, mode);
+}
+
 static int nonblock_recv(int s, void *buf, int len)
 {
 	int ret = recv(s, buf, len, 0);
@@ -137,7 +158,7 @@ void init_explicit_list(void)
 	elist_head.next = &elist_last;
 	elist_last.next = NULL;
 
-	FILE *fp = fopen("explicit.txt", "r");
+	FILE *fp = fopen_at_bin("explicit.txt", "r");
 
 	if (!fp)
 		return;
