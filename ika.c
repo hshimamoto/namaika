@@ -354,6 +354,7 @@ struct httpclient {
 	int nr_hdrs;
 	int parsedone;
 	char requestline[1024];
+	char *extrarequestline;
 	char *method, *scheme, *host, *port, *path, *proto;
 	int contentlen;
 	int bodyptr;
@@ -374,6 +375,8 @@ static void httpclient_reset_request(struct httpclient *cli)
 		free(cli->hdrs[i]);
 		cli->hdrs[i] = NULL;
 	}
+	free(cli->extrarequestline);
+	cli->extrarequestline = NULL;
 	cli->nr_hdrs = 0;
 	cli->contentlen = 0;
 	cli->parsedone = 0;
@@ -385,7 +388,12 @@ static int handle_httpclient_local_request_parse(struct httpclient *cli)
 	int i;
 
 	/* get info from request header */
-	cli->method = cli->requestline;
+	if (strlen(cli->hdrs[0]) < 1024) {
+		cli->method = cli->requestline;
+	} else {
+		cli->extrarequestline = malloc(4096);
+		cli->method = cli->extrarequestline;
+	}
 	dst = cli->method;
 	src = cli->hdrs[0];
 	/* get method */
@@ -754,6 +762,8 @@ static void delete_httpclient(struct httpclient *cli)
 
 	for (i = 0; i < 256; i++)
 		free(cli->hdrs[i]);
+
+	free(cli->extrarequestline);
 
 	delete_http_connection(cli->local);
 	delete_http_connection(cli->remote);
