@@ -217,6 +217,7 @@ struct http_connection {
 	char rbuf[BUFSZ];
 	int rlen;
 	int readptr;
+	uint32_t rbytes, wbytes;
 };
 
 static void http_connection_close(struct http_connection *conn);
@@ -255,6 +256,8 @@ static int http_connection_readbuf(struct http_connection *conn)
 	conn->rbuf[conn->rlen] = '\0';
 
 	conn->last = now;
+
+	conn->rbytes += rlen;
 
 	return conn->rlen;
 }
@@ -298,6 +301,8 @@ static int http_connection_send(struct http_connection *conn,
 		return -1;
 
 	conn->last = now;
+
+	conn->wbytes += len;
 
 	return send(conn->sock, buf, len, 0);
 }
@@ -738,7 +743,10 @@ static struct httpclient *new_httpclient(int local, int remote)
 
 static void delete_httpclient(struct httpclient *cli)
 {
-	printf("delete httpclient %u for %s\n", cli->id, cli->host);
+	printf("delete httpclient %u for %s total %u/%u %u/%u\n",
+	       cli->id, cli->host,
+	       cli->local->rbytes, cli->local->wbytes,
+	       cli->remote->rbytes, cli->remote->wbytes);
 	--nr_httpclients;
 
 	int i;
