@@ -501,14 +501,15 @@ static void handle_httpclient_local_connect(struct httpclient *cli)
 	struct http_connection *conn = cli->local;
 
 	while (!cli->parsedone) {
-		char buf[1024];
+		char buf[4096];
 		int ret;
 
-		ret = http_connection_readline(conn, buf, 1024);
+		ret = http_connection_readline(conn, buf, 4096);
 		if (ret == -1)
 			return;
 		if (ret == -2) {
 			/* unable to handle this request */
+			printf("<%u> BUG: buf is too small\n", cli->id);
 			http_connection_close(conn);
 			return;
 		}
