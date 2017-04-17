@@ -493,7 +493,6 @@ get_proto:
 	for (i = 1; i < cli->nr_hdrs; i++) {
 		char *hdr = cli->hdrs[i];
 
-		puts(hdr);
 		if (!strncmp(hdr, "Content-Length:", 15)) {
 			cli->contentlen = strtoul(hdr + 15, NULL, 10);
 			printf("<%u> data %u bytes\n",
